@@ -33,7 +33,7 @@ class batch_norm(object):
         return tf.contrib.layers.batch_norm(
                 x,
                 decay=self.momentum,
-                updates_collection=None,
+                updates_collections=None,
                 epsilon=self.epsilon,
                 scale=True,
                 is_training=train,

@@ -1,4 +1,7 @@
 /data
+/images
+/model
+/logs
 *.pyc
 *.pyo
 *.swp
