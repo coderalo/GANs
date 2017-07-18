@@ -7,3 +7,4 @@
 *.swp
 __pycache__
 *.log
+test.txt

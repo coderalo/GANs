@@ -1,4 +1,5 @@
 import tensorflow as tf
+import numpy as np
 from DCGAN import DCGAN
 
 flags = tf.app.flags
@@ -6,7 +7,7 @@ flags = tf.app.flags
 flags.DEFINE_string("data_dir", "./data", "Directory of data [./data]")
 flags.DEFINE_integer("input_height", 96, "Height of input image [96]")
 flags.DEFINE_integer("input_width", None, "(Optional) Width of input image")
-flags.DEFINE_integer("output_height", 96, "Height of output image [96]")
+flags.DEFINE_integer("output_height", 64, "Height of output image [96]")
 flags.DEFINE_integer("output_width", None, "(Optional) Width of output image")
 flags.DEFINE_integer("aggregate_height", 36, "Height of aggregate output image [36]")
 flags.DEFINE_integer("aggregate_width", None, "(Optional) Width of aggregate output image")
@@ -29,8 +30,11 @@ flags.DEFINE_float("beta1", 0.5, "Momentum parameter for Adam [0.5]")
 # LOG AND MODEL
 flags.DEFINE_string("checkpoint_dir", "./model", "Directory for pre-loading model [./model]")
 flags.DEFINE_string("save_dir", "./model", "Directory for saving model [./model]")
+flags.DEFINE_string("images_dir", "./images", "Directory for sampled images [./images]")
 flags.DEFINE_string("training_log", "./train.log", "Path of training log [./train.log]")
 flags.DEFINE_string("testing_log", "./test.log", "Path of testing log [./test.log]")
+flags.DEFINE_integer("save_step", 500, "save the model every N step [500]")
+flags.DEFINE_integer("sample_step", 100, "sample every N step [100]")
 # OTHER
 flags.DEFINE_boolean("is_train", True, "Training or testing [True]")
 flags.DEFINE_string("test_file", "./test.txt", "The testing data, only used for testing [./test.txt]")
@@ -64,9 +68,9 @@ with tf.Session(config=run_config) as sess:
         checkpoint_dir=FLAGS.checkpoint_dir,
         save_dir=FLAGS.save_dir,
         data_dir=FLAGS.data_dir,
-        images_dir=FLAGS.image_dir,
+        images_dir=FLAGS.images_dir,
         training_log=FLAGS.training_log,
-        testing_log=FLAGS.testint_log)
+        testing_log=FLAGS.testing_log)
 
     if FLAGS.is_train:
         model.train(FLAGS)
