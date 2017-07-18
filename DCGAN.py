@@ -1,14 +1,8 @@
-import numpy as np
-import random
-import argparse
-import sys
 import os
-import json
-import glob
-from scipy.misc import imread
+import numpy as np
+from math import ceil
 from utils import *
 from model_utils import *
-from utils import *
 from misc_utils import *
 
 class DCGAN:
@@ -82,9 +76,9 @@ class DCGAN:
         self.build_model()
 
     def train(self, config):
-        self.D_optimizer = tf.train.AdamOptimizer(config['d_learning_rate'], beta1=config['beta1']) \
+        self.D_optimizer = tf.train.AdamOptimizer(config.d_learning_rate, beta1=config.beta1) \
                 .minimize(self.D_loss, var_list=self.d_vars)
-        self.G_optimizer = tf.train.AdamOptimizer(config['g_learning_rate'], beta1=config['beta1']) \
+        self.G_optimizer = tf.train.AdamOptimizer(config.g_learning_rate, beta1=config.beta1) \
                 .minimize(self.G_loss, var_list=self.g_vars)
 
         tf.global_variables_initializer().run()
@@ -108,7 +102,7 @@ class DCGAN:
         if checker: counter = before_counter
         
         self.errD_list, self.errG_list = [], []
-        for epoch_idx in range(config['nb_epoch']):
+        for epoch_idx in range(config.nb_epoch):
             nb_batch = len(self.data) // self.batch_size
             np.random.shuffle(self.data)
             for batch_idx in range(nb_batch):
@@ -296,12 +290,46 @@ class DCGAN:
                     self.y_real: sample_y_real,
                     self.y_fake: sample_y_fake
                     })
-        # TODO: revise the data processing code
-        save_images(samples, counter, self.aggregate_size, self.channels, self.images_dir)
+        save_images(samples, counter, self.aggregate_size, self.channels, self.images_dir, True)
         print_time_info("Counter {} errD: {}, errG: {}".format(counter, d_loss, g_loss))
         with open(self.testing_log, 'a') as file:
             file.write("{},{},{}\n".format(counter, d_loss, g_loss))
+  
+    ########################################################
+    #                       testing                        #
+    ########################################################   
     
+    def test(self, sample_y):
+        print_time_info("Interpolation testing...")
+        sample_y_start, sample_y_end = sample_y[0], sample_y[1]
+        IP_sample_y = np.zeros(self.batch_size, self.y_dim)
+        for idx in range(self.y_dim):
+            IP_sample_y[:, idx] = np.linspace(sample_y_start[idx], sample_y_end[idx], self.batch_size)
+        IP_sample_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
+        IP_samples = self.sess.run(self.S, 
+                feed_dict={
+                    self.z: IP_sample_z,
+                    self.y_real: IP_sample_y
+                    })
+        save_images(IP_samples, 0, self.aggregate_size, self.channels, self.images_dir, False)
+        print_time_info("Condition testing...")
+        if len(sample_y) < self.batch_size:
+            print_time_info("Repeat the data to match the batch size ({})...".format(self.batch_size))
+            c_sample_y = np.repeat(sample_y, ceil(self.batch_size / len(sample_y)))[:self.batch_size]
+        elif len(sample_y) > self.batch_size:
+            print_time_info("Shrink the data to match the batch size ({})...".format(self.batch_size))
+            c_sample_y = sample_y[:self.batch_size]
+        else:
+            c_sample_y = sample_y
+        c_sample_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
+        c_samples = self.sess.run(self,S,
+                feed_dict={
+                    self.z: c_sample_z,
+                    self.y_real: c_sample_y
+                    })
+        save_images(c_samples, 1, self.aggregate_size, self.channels, self.images_dir, True)
+        print_time_info("Testing end!")
+
     ########################################################
     #                   data processing                    #
     ########################################################   
