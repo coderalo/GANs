@@ -1,5 +1,7 @@
 import os
 import sys
+import glob
+import json
 import numpy as np
 from math import ceil
 from utils import *
@@ -12,58 +14,35 @@ class DCGAN:
     #            initialize and main training              #
     ########################################################    
     
-    def __init__(
-        self,
-        sess, # tensorflow session
-        input_image_size=96, 
-        output_image_size=64, 
-        aggregate_size=36,
-        channels=3,
-        z_dim=100, # dimension of random noise
-        y_dim=4800, # sent2vec dimension
-        yl_dim=128, # latent dimension for word embeddings 
-        fc_dim=64, # the count of filters of first layer of convolution network
-        fd_dim=64, # the count of filters of first layer of deconvolution network
-        batch_size=64,
-        sample_num=64,
-        save_step=100,
-        sample_step=50,
-        d_round=1, g_round=2, # training round for discriminator / generator for each training cycle
-        checkpoint_dir="./model",
-        save_dir="./model",
-        data_dir="./data",
-        images_dir="./images",
-        training_log="./train.log",
-        testing_log="./test.log"
-        ):
-        
+    def __init__(self, sess, FLAGS):
         self.sess = sess
         self.input_height, self.input_width, self.output_height, self.output_width = \
-                valid_input_and_output(input_image_size, output_image_size)
-        self.aggregate_size = aggregate_size
-        self.channels = channels
-        self.z_dim = z_dim
-        self.y_dim = y_dim
-        self.yl_dim = yl_dim
-        self.fc_dim = fc_dim
-        self.fd_dim = fd_dim
-        self.batch_size = batch_size
-        self.sample_num = sample_num
-        self.save_step = save_step
-        self.sample_step = sample_step
-        self.d_round = d_round
-        self.g_round = g_round
-        self.checkpoint_dir = check_dir(checkpoint_dir)
-        self.save_dir = check_dir(save_dir)
-        self.images_dir = check_dir(images_dir)
-        self.training_log = check_log(training_log)
-        self.testing_log = check_log(testing_log, training=False)
+                valid_input_and_output((FLAGS.input_height, FLAGS.input_width), 
+                        (FLAGS.output_height, FLAGS.output_width))
+        self.aggregate_size = FLAGS.aggregate_size
+        self.channels = FLAGS.channels
+        self.z_dim = FLAGS.z_dim
+        self.y_dim = FLAGS.y_dim
+        self.yl_dim = FLAGS.yl_dim
+        self.fc_dim = FLAGS.fc_dim
+        self.fd_dim = FLAGS.fd_dim
+        self.batch_size = FLAGS.batch_size
+        self.sample_num = FLAGS.sample_num
+        self.save_step = FLAGS.save_step
+        self.sample_step = FLAGS.sample_step
+        self.d_round = FLAGS.d_round
+        self.g_round = FLAGS.g_round
+        self.checkpoint_dir = check_dir(FLAGS.checkpoint_dir)
+        self.save_dir = check_dir(FLAGS.save_dir)
+        self.images_dir = check_dir(FLAGS.images_dir)
+        self.training_log = check_log(FLAGS.training_log)
+        self.testing_log = check_log(FLAGS.testing_log, training=False)
 
-        images_dir = os.path.join(data_dir, "faces/")
-        tags_list = os.path.join(data_dir, "tags_list.json")
-        tags_csv = os.path.join(data_dir, "tags_clean.csv")
-        embeddings = os.path.join(data_dir, "tags_embeddings.json")
-        self.images_tags, self.data, self.tag_embeddings = prepare_data(images_dir, tags_list, tags_csv, embeddings)
+        images_dir = os.path.join(FLAGS.data_dir, "faces/")
+        tags_list = os.path.join(FLAGS.data_dir, "tags_list.json")
+        tags_csv = os.path.join(FLAGS.data_dir, "tags_clean.csv")
+        embeddings = os.path.join(FLAGS.data_dir, "tags_embeddings.json")
+        self.images_tags, self.data, self.tag_embeddings = self.prepare_data(images_dir, tags_list, tags_csv, embeddings)
 
         self.dbn1 = batch_norm(name='batch_d_1')
         self.dbn2 = batch_norm(name='batch_d_2')
@@ -171,7 +150,7 @@ class DCGAN:
             yl = tf.expand_dims(yl, 1)
             yl = tf.expand_dims(yl, 2)
             yl = tf.tile(yl, [1, 4, 4, 1], name="d_yl_tile")
-            h3_concat = tf.concat([h3, yl], 3, name="h3_concat")
+            h3_concat = tf.concat([h3, yl], 3, name="d_h3_concat")
             h4 = LeakyReLU(self.dbn4(conv2d(h3_concat, self.fc_dim * 8, 1, name="d_h4_conv")))
             logits = linear(tf.reshape(h4, [self.batch_size, -1]), 1)
 
@@ -354,6 +333,34 @@ class DCGAN:
         batch_y_real = np.squeeze(self.get_tags(images_path))
         batch_y_fake = np.squeeze(self.get_tags(np.random.choice(self.data, len(images_path))))
         return batch_z, batch_I, batch_y_real, batch_y_fake
+
+    def prepare_data(self, images_dir, tags_list, tags_csv, embeddings_file):
+        with open(tags_list, 'r') as file: tags = json.load(file)
+        images_tags, images_path = [], []
+        images_path = glob.glob(os.path.join(images_dir, "*.jpg"))
+        with open(tags_csv, 'r') as file:
+            for line in file:
+                images_tags.append((-1, -1))
+                data = line.strip().replace(',', '\t').split('\t')[1:]
+                for d in data:
+                    tag = d.split(':')[:-1]
+                    if tag in tags['hair']: 
+                        images_tags[-1][0] = tags['hair'].index(tag)
+                    elif tag in tags['eyes']:
+                        images_tags[-1][1] = tags['eyes'].index(tag)
+                images_tags[-1] = tags['hair'][images_tags[-1][0]] + \
+                        " " + tags['eyes'][images_tags[-1][1]]
+
+        good_idx = []
+        for idx, tags in enumerate(images_tags):
+            if tags[0] != -1 and tags[1] != -1: good_idx.append(idx)
+        
+        images_tags = [images_tags[idx] for idx in good_idx]
+        images_path = [images_path[idx] for idx in good_idx]
+
+        with open(embeddings_file, 'r') as file: tag_embeddings = json.load(file)
+        
+        return images_tags, images_path, tag_embeddings
 
     ########################################################
     #                load and save model                   #

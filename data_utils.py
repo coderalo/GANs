@@ -41,8 +41,10 @@ def get_images_path(count, counter, images_dir, is_train):
         else:
             if counter == 0:
                 images_path.append(os.path.join(images_dir, "testing_interpolation_{:0>{}}.jpg".format(i, offset)))
-            else:
+            elif counter == 1:
                 images_path.append(os.path.join(images_dir, "testing_condition_{:0>{}}.jpg".format(i, offset)))
+            else:
+                images_path.append(os.path.join(images_dir, "testing_{:0>{}}.jpg".format(i, offset)))
 
     return images_path
 
