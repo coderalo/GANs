@@ -60,8 +60,7 @@ def check_log(log_path, training=True):
     else:
         print_time_info("{} hasn't existed, create the file...".format(log_path))
     with open(log_path, 'w') as file:
-        if training: file.write("epoch,batch,errD,errG\n")
-        else: file.write("counter,errD,errG\n")
+        file.write("counter,errD,errG\n")
     print_time_info("Log file {} is ready!".format(log_path))
     return log_path
 

@@ -30,7 +30,7 @@ def get_images(images_path, input_shape, output_shape, crop=True, grayscale=Fals
         else: image = resize(image, output_shape).astype(np.float)
         image /= 255.0
         images.append(image)
-    return np.array(images).astype(np.float32)
+    return np.expand_dims(np.array(images).astype(np.float32), 3)
 
 def get_images_path(count, counter, images_dir, is_train):
     offset = len(str(count))
@@ -62,7 +62,9 @@ def merge_image(images, aggregate_size, channels):
 def save_images(images, counter, aggregate_size, channels, images_dir, is_train):
     images *= 255.0 # IMPORTANT!!!
     images_path = get_images_path(len(images), counter, images_dir, is_train)
+    if channels == 1: images = np.squeeze(images)
     for image, path in zip(images, images_path): imsave(path, image)
+    if channels == 1: images = np.expand_dims(images, 3)
     if is_train:
         aggregate_path = os.path.join(images_dir, "{:0>5}_all.jpg".format(counter))
     else:
@@ -70,7 +72,7 @@ def save_images(images, counter, aggregate_size, channels, images_dir, is_train)
             aggregate_path = os.path.join(images_dir, "testing_interpolation_all.jpg")
         else:
             aggregate_path = os.path.join(images_dir, "testing_condition_all.jpg")
-    merged_image = merge_image(images, aggregate_size, channels)
+    merged_image = np.squeeze(merge_image(images, aggregate_size, channels))
     imsave(aggregate_path, merged_image)
 
 def prepare_data(images_dir, tags_list, tags_csv, embeddings_file):

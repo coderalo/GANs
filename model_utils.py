@@ -1,6 +1,14 @@
 import numpy as np
 import tensorflow as tf
 
+def count_layers(height, width):
+    size = min(height, width)
+    cnt = 0
+    while size > 4:
+        size = ceil(size / 2)
+        cnt += 1
+    return cnt, int(size)
+
 def valid_kernel_and_strides(kernel_size, strides):
     # Validation of kernel_size and strides
     if type(kernel_size) == tuple or type(kernel_size) == list:

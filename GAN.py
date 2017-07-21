@@ -19,12 +19,12 @@ class GAN:
     #            initialize and main training              #
     ########################################################    
     
-    def __init__(self, sess, FLAGS):
+    def __init__(self, sess, FLAGS, Engine):
         self.sess = sess
         self.input_height, self.input_width, self.output_height, self.output_width = \
                 valid_input_and_output((FLAGS.input_height, FLAGS.input_width), 
                         (FLAGS.output_height, FLAGS.output_width))
-        self.aggregate_size = FLAGS.aggregate_size
+        self.aggregate_size = (FLAGS.aggregate_height, FLAGS.aggregate_width)
         self.channels = FLAGS.channels
         self.z_dim = FLAGS.z_dim
         self.h_dim = FLAGS.h_dim
@@ -32,16 +32,19 @@ class GAN:
         self.sample_num = FLAGS.sample_num
         self.save_step = FLAGS.save_step
         self.sample_step = FLAGS.sample_step
+        self.verbose_step = FLAGS.verbose_step
         self.d_round = FLAGS.d_round
         self.g_round = FLAGS.g_round
         self.checkpoint_dir = check_dir(FLAGS.checkpoint_dir)
         self.save_dir = check_dir(FLAGS.save_dir)
         self.images_dir = check_dir(FLAGS.images_dir)
-        self.training_log = check_log(FLAGS.training_log)
-        self.testing_log = check_log(FLAGS.testing_log, training=False)
+        if FLAGS.is_train:
+            self.training_log = check_log(FLAGS.training_log)
+            self.testing_log = check_log(FLAGS.testing_log, training=False)
+        self.is_conditional = FLAGS.is_conditional
+        if self.is_conditional: self.y_dim = FLAGS.y_dim
 
-        images_dir = os.path.join(FLAGS.data_dir, "mnist/")
-        self.data = glob.glob(os.path.join(FLAGS.images_dir, "*.jpg"))
+        self.data_engine = Engine
 
         self.build_model()
 
@@ -55,13 +58,13 @@ class GAN:
 
         self.G_sum = tf.summary.merge([
             self.z_sum, 
-            self.G_sum, 
-            self.G_loss_sum
+            self.D2_sum, self.G_sum, 
+            self.D2_loss_sum, self.G_loss_sum
             ])
 
         self.D_sum = tf.summary.merge([
             self.z_sum,
-            self.D_sum,
+            self.D1_sum, self.D1_loss_sum,
             self.D_loss_sum
             ])
 
@@ -72,14 +75,11 @@ class GAN:
         if checker: counter = before_counter
         
         self.errD_list, self.errG_list = [], []
-        for epoch_idx in range(config.nb_epoch):
-            nb_batch = len(self.data) // self.batch_size
-            np.random.shuffle(self.data)
-            for batch_idx in range(nb_batch):
-                self.train_batch(epoch_idx, batch_idx, counter)
-                if counter % self.sample_step == 0: self.sample_test(counter)
-                if counter % self.save_step == 0: self.save_model(counter)
-                counter += 1
+        for _ in range(config.iterations):
+            self.train_batch(counter)
+            if counter % self.sample_step == 0: self.sample_test(counter)
+            if counter % self.save_step == 0: self.save_model(counter)
+            counter += 1
 
     ########################################################
     #                    model structure                   #
@@ -88,25 +88,34 @@ class GAN:
     def build_model(self):
         # inputs (images, noises and tags)
         output_shape = [self.output_height, self.output_width, self.channels]
-        self.I = tf.placeholder(tf.float32, [self.batch_size] + output_shape, name="image_input")
-        self.z = tf.placeholder(tf.float32, [self.batch_size, self.z_dim], name="noise_input")
+        self.I = tf.placeholder(tf.float32, [None] + output_shape, name="image_input")
+        self.z = tf.placeholder(tf.float32, [None, self.z_dim], name="noise_input")
+        if self.is_conditional: self.y = tf.placeholder(tf.float32, [None, self.y_dim], name="label_input")
         ## summary
         self.z_sum = tf.summary.histogram('z', self.z)
         # generator and sampler
-        self.G = self.generator(self.z)
-        self.S = self.sampler(self.z)
+        if self.is_conditional:
+            self.G = self.generator(self.z, self.y)
+            self.S = self.generator(self.z, self.y)
+        else:
+            self.G = self.generator(None, self.z)
+            self.S = self.sampler(None, self.z)
         ## summary
         self.G_sum = tf.summary.image('G', self.G)
         # discriminator (for real images and generator's images)
-        self.D1, self.D1_logits = self.discriminator(self.I, reuse=False)
-        self.D2, self.D2_logits = self.discriminator(self.G, reuse=False)
+        if self.is_conditional:
+            self.D1, self.D1_logits = self.discriminator(self.I, self.y, reuse=False)
+            self.D2, self.D2_logits = self.discriminator(self.G, self.y, reuse=True)
+        else:
+            self.D1, self.D1_logits = self.discriminator(self.I, None, reuse=False)
+            self.D2, self.D2_logits = self.discriminator(self.G, None, reuse=True)
         ## summary
         self.D1_sum = tf.summary.histogram('D1', self.D1)
         self.D2_sum = tf.summary.histogram('D2', self.D2)
         # loss of model
         ## discriminator
         self.D1_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D1_logits, labels=tf.ones_like(self.D1)))
-        self.D2_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D2_logits, labels=tf.ones_like(self.D2)))
+        self.D2_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D2_logits, labels=tf.zeros_like(self.D2)))
         self.D_loss = self.D1_loss + self.D2_loss
         ## generator
         self.G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D2_logits, labels=tf.ones_like(self.D2)))
@@ -123,26 +132,36 @@ class GAN:
 
         self.saver = tf.train.Saver()
 
-    def discriminator(self, input_tensor, reuse=False):
+    def discriminator(self, input_tensor, label_tensor=None, reuse=False):
         with tf.variable_scope("discriminator") as scope:
             if reuse: scope.reuse_variables()
-            h = tf.nn.relu(linear(input_tensor, self.h_dim, name="d_hid_lin"))
+            I = tf.reshape(input_tensor, (-1, self.input_height * self.input_width))
+            if label_tensor != None: 
+                h = tf.nn.relu(linear(tf.concat([I, label_tensor], 1), self.h_dim, name="d_hid_lin"))
+            else:
+                h = tf.nn.relu(linear(I, self.h_dim, name="d_hid_lin"))
+                
             logits = linear(h, 1, name="d_logits")
-
             return tf.nn.sigmoid(logits), logits
 
-    def generator(self, noise_tensor):
+    def generator(self, label_tensor, noise_tensor):
         with tf.variable_scope("generator") as scope:
-            h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_hid_lin"))
-            output = tf.reshape(tf.nn.sigmoid(linear(h, 1, name="g_output")), (28, 28))
+            if label_tensor != None:
+                h = tf.nn.relu(linear(tf.concat([noise_tensor, label_tensor], 1), self.h_dim, name="g_hid_lin"))
+            else:
+                h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_hid_lin"))
+            output = tf.reshape(tf.nn.sigmoid(linear(h, 784, name="g_output")), (self.batch_size, 28, 28, self.channels))
             
             return output
     
-    def sampler(self, noise_tensor):
+    def sampler(self, label_tensor, noise_tensor):
         with tf.variable_scope("generator") as scope:
-            scope.resue_variables()
-            h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_hid_lin"))
-            output = tf.reshape(tf.nn.sigmoid(linear(h, 1, name="g_output")), (28, 28))
+            scope.reuse_variables()
+            if label_tensor != None:
+                h = tf.nn.relu(linear(tf.concat([noise_tensor, label_tensor], 1), self.h_dim, name="g_hid_lin"))
+            else:
+                h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_hid_lin"))
+            output = tf.reshape(tf.nn.sigmoid(linear(h, 784, name="g_output")), (self.batch_size, 28, 28, self.channels))
             
             return output
 
@@ -150,49 +169,96 @@ class GAN:
     #                   train and sample                   #
     ########################################################    
 
-    def train_batch(self, epoch_idx, batch_idx, counter):
-        batch_z, batch_I = \
-                self.get_data(self.data[batch_idx * self.batch_size: (batch_idx + 1) * self.batch_size])
-        
+    def train_batch(self, counter):
+        if self.is_conditional: 
+            batch = self.data_engine.get_batch(self.batch_size, with_labels=True)
+            batch_I = batch['images']
+            batch_y = batch['labels']
+        else:
+            batch = self.data_engine.get_batch(self.batch_size, with_labels=False) 
+            batch_I = batch['images']
+
         for _ in range(self.d_round): 
             batch_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-            _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
-                    feed_dict={
-                        self.I: batch_I,
-                        self.z: batch_z,
-                        })
+            if self.is_conditional:
+                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                        feed_dict={
+                            self.I: batch_I,
+                            self.y: batch_y,
+                            self.z: batch_z
+                            })
+            else:
+                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                        feed_dict={
+                            self.I: batch_I,
+                            self.z: batch_z
+                            })
 
             self.writer.add_summary(summary_str, counter)
 
         for _ in range(self.g_round): 
             batch_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-            _, summary_str = self.sess.run([self.G_optimizer, self.G_sum],
-                    feed_dict={
-                        self.z: batch_z
-                        })
-
+            if self.is_conditional:
+                _, summary_str = self.sess.run([self.G_optimizer, self.G_sum],
+                        feed_dict={
+                            self.I: batch_I,
+                            self.y: batch_y,
+                            self.z: batch_z
+                            })
+            else:
+                _, summary_str = self.sess.run([self.G_optimizer, self.G_sum],
+                        feed_dict={
+                            self.I: batch_I,
+                            self.z: batch_z
+                            })
+            
             self.writer.add_summary(summary_str, counter)
+        
+        if self.is_conditional:
+            errD1 = self.D1_loss.eval({self.I: batch_I, self.y: batch_y})
+            errD2 = self.D2_loss.eval({self.z: batch_z, self.y: batch_y})
+            errG = self.G_loss.eval({self.z: batch_z, self.y: batch_y})
+        else:
+            errD1 = self.D1_loss.eval({self.I: batch_I})
+            errD2 = self.D2_loss.eval({self.z: batch_z})
+            errG = self.G_loss.eval({self.z: batch_z})
 
-        errD1 = self.D1_loss.eval({self.I: batch_I})
-        errD2 = self.D2_loss.eval({self.z: batch_z})
         errD = errD1 + errD2
-        errG = self.G_loss.eval({self.z: batch_z})
 
-        print_time_info("Epoch {:0>3} batch {:0>5} errD: {}, errG: {}".format(epoch_idx, batch_idx, errD, errG))
-        with open(self.training_log, 'a') as file:
-            file.write("{},{},{},{}\n".format(epoch_idx, batch_idx, errD, errG))
+        if counter % self.verbose_step == 0:
+            print_time_info("Iteration {:0>7} errD: {}, errG: {}".format(counter, errD, errG))
+            with open(self.training_log, 'a') as file:
+                file.write("{},{},{}\n".format(counter, errD, errG))
 
-        self.errD_list.append(errD)
-        self.errG_list.append(errG)
+            self.errD_list.append(errD)
+            self.errG_list.append(errG)
     
     def sample_test(self, counter):
-        sample_z, sample_I = self.get_data(self.data[:self.sample_num])
-        samples, d_loss, g_loss = self.sess.run(
-                [self.S, self.D_loss, self.G_loss],
-                feed_dict={
-                    self.z: sample_z,
-                    self.I: sample_I
-                    })
+        if self.is_conditional: 
+            sample = self.data_engine.get_batch(self.sample_num, with_labels=True, is_random=True)
+            sample_I = sample['images']
+            sample_y = sample['labels']
+        else:
+            sample = self.data_engine.get_batch(self.sample_num, with_labels=False, is_random=True) 
+            sample_I = sample['images']
+        sample_z = np.random.uniform(-1, 1, size=(self.sample_num, self.z_dim))
+        
+        if self.is_conditional:
+            samples, d_loss, g_loss = self.sess.run(
+                    [self.S, self.D_loss, self.G_loss],
+                    feed_dict={
+                        self.z: sample_z,
+                        self.y: sample_y,
+                        self.I: sample_I
+                        })
+        else:
+            samples, d_loss, g_loss = self.sess.run(
+                    [self.S, self.D_loss, self.G_loss],
+                    feed_dict={
+                        self.z: sample_z,
+                        self.I: sample_I
+                        })
+
         save_images(samples, counter, self.aggregate_size, self.channels, self.images_dir, True)
         print_time_info("Counter {} errD: {}, errG: {}".format(counter, d_loss, g_loss))
         with open(self.testing_log, 'a') as file:
@@ -211,16 +277,6 @@ class GAN:
         samples = self.sess_run(self.S, feed_dict={self.z: sample_z})
         save_images(samples, 2, self.aggregate_size, self.channels, self.images_dir, False)
         print_time_info("Testing end!")
-
-    ########################################################
-    #                   data processing                    #
-    ########################################################   
-
-    def get_data(self, images_path):
-        batch_z = np.random.uniform(-1, 1, size=(len(images_path), self.z_dim))
-        input_shape, output_shape = (self.input_height, self.input_width), (self.output_height, self.output_width)
-        batch_I = get_images(images_path, input_shape, output_shape)
-        return batch_z, batch_I
 
     ########################################################
     #                load and save model                   #
