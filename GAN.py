@@ -268,13 +268,21 @@ class GAN:
     #                       testing                        #
     ########################################################   
     
+    #TODO: Add other test functions
     def test(self):
         checker, before_counter = self.load_model()
         if not checker:
             print_time_info("There isn't any ready model, quit.")
             sys.quit()
+        
         sample_z = np.random_uniform(-1, 1, size=(self.batch_size, self.z_dim))
-        samples = self.sess_run(self.S, feed_dict={self.z: sample_z})
+        if self.is_conditional:
+            sample = self.data_engine.get_batch(self.batch_size, with_labels=True, is_random=True)
+            sample_y = sample['labels']
+            samples = self.sess.run(self.S, feed_dict={self.z: sample_z, self.y: sample_y})
+        else:
+            samples = self.sess.run(self.S, feed_dict={self.z: sample_z})
+
         save_images(samples, 2, self.aggregate_size, self.channels, self.images_dir, False)
         print_time_info("Testing end!")
 

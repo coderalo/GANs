@@ -35,6 +35,7 @@ class DCGAN:
         self.sample_num = FLAGS.sample_num
         self.save_step = FLAGS.save_step
         self.sample_step = FLAGS.sample_step
+        self.verbose_step = FLAGS.verbose_step
         self.d_round = FLAGS.d_round
         self.g_round = FLAGS.g_round
         self.checkpoint_dir = check_dir(FLAGS.checkpoint_dir)
@@ -256,69 +257,118 @@ class DCGAN:
     ########################################################    
 
     def train_batch(self, counter):
-       
+        if self.is_conditional:
+            batch = self.data_engine.get_batch(self.batch_size, with_labels=True, with_wrong_labels=True)
+            batch_I = batch["images"]
+            batch_y_real = batch["labels"]
+            batch_y_fake = batch["fake_labels"]
+        else:
+            batch = self.data_engine.get_batch(self.batch_size)
+            batch_I = batch["images"]
 
-        for _ in range(self.d_round): 
+        for _ in range(self.d_round):
             batch_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-            _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
-                    feed_dict={
-                        self.I: batch_I,
-                        self.z: batch_z,
-                        self.y_real: batch_y_real,
-                        self.y_fake: batch_y_fake
-                        })
+            if self.is_conditional:
+                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                        feed_dict={
+                            self.I: batch_I,
+                            self.z: batch_z,
+                            self.y_real: batch_y_real,
+                            self.y_fake: batch_y_fake
+                            })
+            else:
+                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                        feed_dict={
+                            self.I: batch_I,
+                            self.z: batch_z
+                            })
 
             self.writer.add_summary(summary_str, counter)
 
         for _ in range(self.g_round): 
             batch_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-            _, summary_str = self.sess.run([self.G_optimizer, self.G_sum],
-                    feed_dict={
-                        self.z: batch_z,
-                        self.y_real: batch_y_real
-                        })
+            if self.is_conditional:
+                _, summary_str = self.sess.run([self.G_optimizer, self.G_sum],
+                        feed_dict={
+                            self.z: batch_z,
+                            self.y_real: batch_y_real
+                            })
+            else:
+                _, summary_str = self.sess.run([self.G_optimizer, self.G_sum],
+                        feed_dict={
+                            self.z: batch_z
+                            })
 
             self.writer.add_summary(summary_str, counter)
 
-        errD_real = self.D_real_loss.eval({
-            self.I: batch_I,
-            self.y_real: batch_y_real
-            })
+        if self.is_conditional:
+            errD_real = self.D_real_loss.eval({
+                self.I: batch_I,
+                self.y_real: batch_y_real
+                })
+            
+            errD_fake = self.D_fake_loss.eval({
+                self.z: batch_z,
+                self.y_real: batch_y_real
+                })
+
+            errD_wrong = self.D_wrong_loss.eval({
+                self.I: batch_I,
+                self.y_fake: batch_y_fake
+                })
+            errG = self.G_loss.eval({
+                self.z: batch_z,
+                self.y_real: batch_y_real
+                })
+
+            errD = errD_real + errD_fake + errD_wrong
         
-        errD_fake = self.D_fake_loss.eval({
-            self.z: batch_z,
-            self.y_real: batch_y_real
-            })
+        else:
+            errD_real = self.D_real_loss.eval({
+                self.I: batch_I
+                })
+            errD_fake = self.D_fake_loss.eval({
+                self.z: batch_z
+                })
+            errG = self.G_loss.eval({
+                self.z: batch_z
+                })
+            
+        if counter % self.verbose_step == 0:
+            print_time_info("Iteration {:0>7} errD: {}, errG: {}".format(counter, errD, errG))
+            with open(self.training_log, 'a') as file:
+                file.write("{},{},{}\n".format(counter, errD, errG))
 
-        errD_wrong = self.D_wrong_loss.eval({
-            self.I: batch_I,
-            self.y_fake: batch_y_fake
-            })
-
-        errD = errD_real + errD_fake + errD_wrong
-
-        errG = self.G_loss.eval({
-            self.z: batch_z,
-            self.y_real: batch_y_real
-            })
-
-        print_time_info("Epoch {:0>3} batch {:0>5} errD: {}, errG: {}".format(epoch_idx, batch_idx, errD, errG))
-        with open(self.training_log, 'a') as file:
-            file.write("{},{},{},{}\n".format(epoch_idx, batch_idx, errD, errG))
-
-        self.errD_list.append(errD)
-        self.errG_list.append(errG)
+            self.errD_list.append(errD)
+            self.errG_list.append(errG)
     
     def sample_test(self, counter):
-        sample_z, sample_I, sample_y_real, sample_y_fake = self.get_data(self.data[:self.sample_num])
-        samples, d_loss, g_loss = self.sess.run(
-                [self.S, self.D_loss, self.G_loss],
-                feed_dict={
-                    self.z: sample_z,
-                    self.I: sample_I,
-                    self.y_real: sample_y_real,
-                    self.y_fake: sample_y_fake
-                    })
+        if self.is_conditional:
+            sample = self.data_engine.get_batch(self.sample_num, with_labels=True, with_wrong_labels=True, is_random=True)
+            sample_I = sample["images"]
+            sample_y_real = sample["labels"]
+            sample_y_fake = sample["fake_labels"]
+        else:
+            sample = self.data_engine.get_batch(self.sample_num, is_random=True)
+            sample_I = sample["images"]
+
+        if self.is_conditional:
+            samples, d_loss, g_loss = self.sess.run(
+                    [self.S, self.D_loss, self.G_loss],
+                    feed_dict={
+                        self.z: sample_z,
+                        self.I: sample_I,
+                        self.y_real: sample_y_real,
+                        self.y_fake: sample_y_fake
+                        })
+        else:
+            samples, d_loss, g_loss = self.sess.run(
+                    [self.S, self.D_loss, self.G_loss],
+                    feed_dict={
+                        self.z: sample_z,
+                        self.I: sample_I
+                        }
+                    )
         save_images(samples, counter, self.aggregate_size, self.channels, self.images_dir, True)
         print_time_info("Counter {} errD: {}, errG: {}".format(counter, d_loss, g_loss))
         with open(self.testing_log, 'a') as file:
@@ -328,39 +378,21 @@ class DCGAN:
     #                       testing                        #
     ########################################################   
     
-    def test(self, sample_y):
+    def test(self):
         checker, before_counter = self.load_model()
         if not checker:
             print_time_info("There isn't any ready model, quit.")
             sys.quit()
-        print_time_info("Interpolation testing...")
-        sample_y_start, sample_y_end = sample_y[0], sample_y[1]
-        IP_sample_y = np.zeros((self.batch_size, self.y_dim))
-        for idx in range(self.y_dim):
-            IP_sample_y[:, idx] = np.linspace(sample_y_start[idx], sample_y_end[idx], self.batch_size)
-        IP_sample_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-        IP_samples = self.sess.run(self.S, 
-                feed_dict={
-                    self.z: IP_sample_z,
-                    self.y_real: IP_sample_y
-                    })
-        save_images(IP_samples, 0, self.aggregate_size, self.channels, self.images_dir, False)
-        print_time_info("Condition testing...")
-        if len(sample_y) < self.batch_size:
-            print_time_info("Repeat the data to match the batch size ({})...".format(self.batch_size))
-            c_sample_y = np.repeat(sample_y, ceil(self.batch_size / len(sample_y))).reshape((-1, self.y_dim))[:self.batch_size]
-        elif len(sample_y) > self.batch_size:
-            print_time_info("Shrink the data to match the batch size ({})...".format(self.batch_size))
-            c_sample_y = sample_y[:self.batch_size]
+        
+        sample_z = np.random_uniform(-1, 1, size=(self.batch_size, self.z_dim))
+        if self.is_conditional:
+            sample = self.data_engine.get_batch(self.batch_size, with_labels=True, is_random=True)
+            sample_y = sample['labels']
+            samples = self.sess.run(self.S, feed_dict={self.z: sample_z, self.y_real: sample_y})
         else:
-            c_sample_y = sample_y
-        c_sample_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-        c_samples = self.sess.run(self.S,
-                feed_dict={
-                    self.z: c_sample_z,
-                    self.y_real: c_sample_y
-                    })
-        save_images(c_samples, 1, self.aggregate_size, self.channels, self.images_dir, True)
+            samples = self.sess.run(self.S, feed_dict={self.z: sample_z})
+
+        save_images(samples, 2, self.aggregate_size, self.channels, self.images_dir, False)
         print_time_info("Testing end!")
     
     ########################################################
