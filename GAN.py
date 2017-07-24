@@ -137,9 +137,9 @@ class GAN:
             if reuse: scope.reuse_variables()
             I = tf.reshape(input_tensor, (-1, self.input_height * self.input_width))
             if label_tensor != None: 
-                h = tf.nn.relu(linear(tf.concat([I, label_tensor], 1), self.h_dim, name="d_hid_lin"))
+                h = tf.nn.relu(linear(tf.concat([I, label_tensor], 1), self.h_dim, name="d_h_lin"))
             else:
-                h = tf.nn.relu(linear(I, self.h_dim, name="d_hid_lin"))
+                h = tf.nn.relu(linear(I, self.h_dim, name="d_h_lin"))
                 
             logits = linear(h, 1, name="d_logits")
             return tf.nn.sigmoid(logits), logits
@@ -147,9 +147,9 @@ class GAN:
     def generator(self, label_tensor, noise_tensor):
         with tf.variable_scope("generator") as scope:
             if label_tensor != None:
-                h = tf.nn.relu(linear(tf.concat([noise_tensor, label_tensor], 1), self.h_dim, name="g_hid_lin"))
+                h = tf.nn.relu(linear(tf.concat([noise_tensor, label_tensor], 1), self.h_dim, name="g_h_lin"))
             else:
-                h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_hid_lin"))
+                h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_h_lin"))
             output = tf.reshape(tf.nn.sigmoid(linear(h, 784, name="g_output")), (self.batch_size, 28, 28, self.channels))
             
             return output
@@ -158,9 +158,9 @@ class GAN:
         with tf.variable_scope("generator") as scope:
             scope.reuse_variables()
             if label_tensor != None:
-                h = tf.nn.relu(linear(tf.concat([noise_tensor, label_tensor], 1), self.h_dim, name="g_hid_lin"))
+                h = tf.nn.relu(linear(tf.concat([noise_tensor, label_tensor], 1), self.h_dim, name="g_h_lin"))
             else:
-                h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_hid_lin"))
+                h = tf.nn.relu(linear(noise_tensor, self.h_dim, name="g_h_lin"))
             output = tf.reshape(tf.nn.sigmoid(linear(h, 784, name="g_output")), (self.batch_size, 28, 28, self.channels))
             
             return output
@@ -260,7 +260,7 @@ class GAN:
                         })
 
         save_images(samples, counter, self.aggregate_size, self.channels, self.images_dir, True)
-        print_time_info("Counter {} errD: {}, errG: {}".format(counter, d_loss, g_loss))
+        print_time_info("Iteration {} validation errD: {}, errG: {}".format(counter, d_loss, g_loss))
         with open(self.testing_log, 'a') as file:
             file.write("{},{},{}\n".format(counter, d_loss, g_loss))
   

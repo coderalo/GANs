@@ -162,6 +162,10 @@ class DCGAN:
         self.d_vars = [var for var in t_vars if 'd_' in var.name]
         self.g_vars = [var for var in t_vars if 'g_' in var.name]
 
+        print(self.d_vars)
+        print(self.g_vars)
+        exit()
+
         self.saver = tf.train.Saver()
 
     def discriminator(self, input_tensor, label_tensor, reuse=False):
@@ -370,7 +374,7 @@ class DCGAN:
                         }
                     )
         save_images(samples, counter, self.aggregate_size, self.channels, self.images_dir, True)
-        print_time_info("Counter {} errD: {}, errG: {}".format(counter, d_loss, g_loss))
+        print_time_info("Iteration {} validation errD: {}, errG: {}".format(counter, d_loss, g_loss))
         with open(self.testing_log, 'a') as file:
             file.write("{},{},{}\n".format(counter, d_loss, g_loss))
   

@@ -46,8 +46,8 @@ flags.DEFINE_string("save_dir", "./model", "Directory for saving model [./model]
 flags.DEFINE_string("images_dir", "./images", "Directory for sampled images [./images]")
 flags.DEFINE_string("training_log", "./train.log", "Path of training log [./train.log]")
 flags.DEFINE_string("testing_log", "./test.log", "Path of testing log [./test.log]")
-flags.DEFINE_integer("save_step", 500, "save the model every N step [500]")
-flags.DEFINE_integer("sample_step", 100, "sample every N step [100]")
+flags.DEFINE_integer("save_step", 50000, "save the model every N step [50000]")
+flags.DEFINE_integer("sample_step", 10000, "sample every N step [10000]")
 flags.DEFINE_integer("verbose_step", 1000, "output log every N step [1000]")
 # OTHER
 flags.DEFINE_boolean("is_train", True, "Training or testing [True]")
