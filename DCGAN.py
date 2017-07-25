@@ -26,7 +26,7 @@ class DCGAN:
         self.input_height, self.input_width, self.output_height, self.output_width = \
                 valid_input_and_output((FLAGS.input_height, FLAGS.input_width), 
                         (FLAGS.output_height, FLAGS.output_width))
-        self.aggregate_size = FLAGS.aggregate_size
+        self.aggregate_size = (FLAGS.aggregate_height, FLAGS.aggregate_width)
         self.channels = FLAGS.channels
         self.z_dim = FLAGS.z_dim
         self.fc_dim = FLAGS.fc_dim
@@ -41,9 +41,11 @@ class DCGAN:
         self.checkpoint_dir = check_dir(FLAGS.checkpoint_dir)
         self.save_dir = check_dir(FLAGS.save_dir)
         self.images_dir = check_dir(FLAGS.images_dir)
-        self.training_log = check_log(FLAGS.training_log)
-        self.testing_log = check_log(FLAGS.testing_log, training=False)
-
+        if FLAGS.is_train == True:
+            self.training_log = check_log(FLAGS.training_log)
+            self.testing_log = check_log(FLAGS.testing_log, training=False)
+        else:
+            self.test_file = FLAGS.test_file
         self.is_conditional = FLAGS.is_conditional
         if self.is_conditional:
             self.y_dim = FLAGS.y_dim
@@ -52,10 +54,9 @@ class DCGAN:
         self.data_engine = Engine
 
         self.layers_count, self.conv_size = count_layers(self.output_height, self.output_width)
-        self.dbn, self.gbn = [None] * (self.layers_count + 1), [None] * (self.layers_count)
-        for idx in range(layers_count):
-            self.dbn[idx+1] = batch_norm(name='batch_d_{}'.format(idx+1))
-            self.gbn[idx] = batch_norm(name='batch_g_{}'.format(idx))
+        self.dbn, self.gbn = [None] * (self.layers_count + 1), [None] * (self.layers_count+1)
+        for idx in range(self.layers_count): self.dbn[idx+1] = batch_norm(name='batch_d_{}'.format(idx+1))
+        for idx in range(self.layers_count): self.gbn[idx] = batch_norm(name='batch_g_{}'.format(idx))
 
         self.build_model()
 
@@ -130,8 +131,8 @@ class DCGAN:
             self.D_fake, self.D_fake_logits = self.discriminator(self.G, self.y_real, reuse=True)
             self.D_wrong, self.D_wrong_logits = self.discriminator(self.I, self.y_fake, reuse=True)
         else:
-            self.D_real = self.discriminator(self.I, reuse=False)
-            self.D_fake = self.discriminator(self.G, reuse=True)
+            self.D_real, self.D_real_logits = self.discriminator(self.I, None, reuse=False)
+            self.D_fake, self.D_fake_logits = self.discriminator(self.G, None, reuse=True)
         ## summary
         self.D_real_sum = tf.summary.histogram('D_real', self.D_real)
         self.D_fake_sum = tf.summary.histogram('D_fake', self.D_fake)
@@ -162,10 +163,6 @@ class DCGAN:
         self.d_vars = [var for var in t_vars if 'd_' in var.name]
         self.g_vars = [var for var in t_vars if 'g_' in var.name]
 
-        print(self.d_vars)
-        print(self.g_vars)
-        exit()
-
         self.saver = tf.train.Saver()
 
     def discriminator(self, input_tensor, label_tensor, reuse=False):
@@ -183,7 +180,7 @@ class DCGAN:
                                 self.fc_dim * (2 ** idx), 
                                 name="d_h{}_conv".format(idx))))
                             )
-            if is_conditional:      
+            if self.is_conditional:      
                 yl = linear(label_tensor, self.yl_dim, name="d_yl")
                 yl = tf.expand_dims(yl, 1)
                 yl = tf.expand_dims(yl, 2)
@@ -207,24 +204,23 @@ class DCGAN:
                 s_w.insert(0, conv_out_size_same(s_w[0], 2))
            
             hidden = []
-            if is_conditional:
+            if self.is_conditional:
                 yl = linear(label_tensor, self.yl_dim, name="g_yl")
                 noise_tensor = tf.concat([noise_tensor, yl], 1)
                 for idx in range(self.layers_count+1):
                     if idx == 0: 
-                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count), name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]))))
+                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count)*s_h[0]*s_w[0], name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]))))
                     else:
                         hidden.append(tf.nn.relu(self.gbn[idx](deconv2d(hidden[-1], [self.batch_size, s_h[idx], s_w[idx], self.fd_dim*(2 ** (self.layers_count-idx))], name='g_h{}_deconv'.format(idx)))))
-                hidden.append(deconv2d(hidden[-1], [self.batch_size, s_h[-1], s_w[-1], self.channels], name='g_h{}_deconv'.format(self.layers_count)))
+                hidden.append(deconv2d(hidden[-1], [self.batch_size, s_h[-1], s_w[-1], self.channels], name='g_h{}_deconv'.format(self.layers_count+1)))
             else:
-                for idx in range(self.layers_count+1):
+                for idx in range(self.layers_count):
                     if idx == 0:
-                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count), name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]))))
+                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count)*s_h[0]*s_w[0], name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]))))
                     else:
                         h = self.gbn[idx](deconv2d(hidden[-1], [self.batch_size, s_h[idx], s_w[idx], self.fd_dim*(2 ** (self.layers_count-idx))], name='g_h{}_deconv'.format(idx)))
-                        if idx != self.layers_count: hidden.append(tf.nn.relu(h))
-                        else: hidden.append(h)
-
+                        hidden.append(tf.nn.relu(h))
+                hidden.append(deconv2d(hidden[-1], [self.batch_size, s_h[-1], s_w[-1], self.channels], name='g_h{}_deconv'.format(self.layers_count)))
             return (tf.nn.tanh(hidden[-1])/2. + 0.5)
     
     def sampler(self, noise_tensor, label_tensor):
@@ -236,24 +232,23 @@ class DCGAN:
                 s_w.insert(0, conv_out_size_same(s_w[0], 2))
            
             hidden = []
-            if is_conditional:
+            if self.is_conditional:
                 yl = linear(label_tensor, self.yl_dim, name="g_yl")
                 noise_tensor = tf.concat([noise_tensor, yl], 1)
                 for idx in range(self.layers_count+1):
                     if idx == 0: 
-                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count), name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]), train=False)))
+                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count)*s_h[0]*s_w[0], name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]), train=False)))
                     else:
                         hidden.append(tf.nn.relu(self.gbn[idx](deconv2d(hidden[-1], [self.batch_size, s_h[idx], s_w[idx], self.fd_dim*(2 ** (self.layers_count-idx))], name='g_h{}_deconv'.format(idx)), train=False)))
-                hidden.append(deconv2d(hidden[-1], [self.batch_size, s_h[-1], s_w[-1], self.channels], name='g_h{}_deconv'.format(self.layers_count)))
+                hidden.append(deconv2d(hidden[-1], [self.batch_size, s_h[-1], s_w[-1], self.channels], name='g_h{}_deconv'.format(self.layers_count+1)))
             else:
-                for idx in range(self.layers_count+1):
+                for idx in range(self.layers_count):
                     if idx == 0:
-                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count), name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]), train=False)))
+                        hidden.append(tf.nn.relu(self.gbn[0](tf.reshape(linear(noise_tensor, self.fd_dim*(2 ** self.layers_count)*s_h[0]*s_w[0], name='g_h0_lin'), [-1, s_h[0], s_w[0], self.fd_dim*(2 ** self.layers_count)]), train=False)))
                     else:
                         h = self.gbn[idx](deconv2d(hidden[-1], [self.batch_size, s_h[idx], s_w[idx], self.fd_dim*(2 ** (self.layers_count-idx))], name='g_h{}_deconv'.format(idx)), train=False)
-                        if idx != self.layers_count: hidden.append(tf.nn.relu(h))
-                        else: hidden.append(h)
-
+                        hidden.append(tf.nn.relu(h))
+                hidden.append(deconv2d(hidden[-1], [self.batch_size, s_h[-1], s_w[-1], self.channels], name='g_h{}_deconv'.format(self.layers_count)))
             return (tf.nn.tanh(hidden[-1])/2. + 0.5)
 
     ########################################################
@@ -338,6 +333,8 @@ class DCGAN:
                 self.z: batch_z
                 })
             
+            errD = errD_real + errD_fake
+            
         if counter % self.verbose_step == 0:
             print_time_info("Iteration {:0>7} errD: {}, errG: {}".format(counter, errD, errG))
             with open(self.training_log, 'a') as file:
@@ -356,6 +353,8 @@ class DCGAN:
             sample = self.data_engine.get_batch(self.sample_num, is_random=True)
             sample_I = sample["images"]
 
+        sample_z = np.random.uniform(-1, 1, size=(self.sample_num, self.z_dim))
+        
         if self.is_conditional:
             samples, d_loss, g_loss = self.sess.run(
                     [self.S, self.D_loss, self.G_loss],

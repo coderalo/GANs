@@ -41,6 +41,8 @@ class GAN:
         if FLAGS.is_train:
             self.training_log = check_log(FLAGS.training_log)
             self.testing_log = check_log(FLAGS.testing_log, training=False)
+        else:
+            self.test_file = FLAGS.test_file
         self.is_conditional = FLAGS.is_conditional
         if self.is_conditional: self.y_dim = FLAGS.y_dim
 
@@ -268,7 +270,6 @@ class GAN:
     #                       testing                        #
     ########################################################   
     
-    #TODO: Add other test functions
     def test(self):
         checker, before_counter = self.load_model()
         if not checker:
@@ -283,8 +284,42 @@ class GAN:
         else:
             samples = self.sess.run(self.S, feed_dict={self.z: sample_z})
 
-        save_images(samples, 2, self.aggregate_size, self.channels, self.images_dir, False)
+        save_images(samples, 0, self.aggregate_size, self.channels, self.images_dir, False)
         print_time_info("Testing end!")
+
+    def conditional_test(self):
+        checker, before_counter = self.load_model()
+        if not checker:
+            print_time_info("There isn't any ready model, quit.")
+            sys.quit()
+        if not self.is_conditional:
+            print_time_info("Unconditional model doesn't support conditional test, quit.")
+            sys.quit()
+
+        sample_z = np.random_uniform(-1, 1, size=(self.batch_size, self.z_dim))
+        sample_y, offset = self.data_engine.conditional_test(self.batch_size)
+        samples = self.sess.run(self.S, feed_dict={self.z: sample_z, self.y: sample_y})
+        samples[offset:, :, :] = 0.0
+        save_images(samples, 1, self.aggregate_size, self.channels, self.images_dir, False)
+        print_time_info("Conditional testing end!")
+
+    def interpolation_test(self):
+        checker, before_counter = self.load_model()
+        if not checker:
+            print_time_info("There isn't any ready model, quit.")
+            sys.quit()
+        if not self.is_conditional:
+            print_time_info("Unconditional model doesn't support interpolation test, quit.")
+            sys.quit()
+        sample_z = np.random_uniform(-1, 1, size=(self.batch_size, self.z_dim))
+        labels = []
+        with open(self.test_file, 'r') as file:
+            for line in file: labels.append(line.strip())
+        sample_y = self.data_engine.interpolation_test(labels, self.batch_size)
+        samples = self.sess.run(self.S, feed_dict={self.z: sample_z, self.y: sample_y})
+        save_images(samples, 1, self.aggregate_size, self.channels, self.images_dir, False)
+        print_time_info("Interpolation testing end!")
+
 
     ########################################################
     #                load and save model                   #

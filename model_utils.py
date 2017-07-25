@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+from math import ceil, floor, log
 
 def count_layers(height, width):
     size = min(height, width)

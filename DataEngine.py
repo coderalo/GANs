@@ -88,7 +88,7 @@ class DataEngine:
             labels = np.zeros(len(images_path), self.embedding_dim)
             for idx, path in enumerate(images_path):
                 num = os.path.basename(path).split('.')[0]
-                labels[idx] = self.tag_embeddings[self.labels[num]]
+                labels[idx] = self.label_embeddings[self.labels[num]]
         elif self.dataset == "WIKIART":
             pass
 
@@ -131,3 +131,44 @@ class DataEngine:
         if with_wrong_labels: batch["wrong_labels"] = wrong_labels
         
         return batch
+
+    def conditional_test(self, batch_size):
+        if not self.with_labels:
+            print_time_info("Error! The engine hasn't initialized with the labels, quit.")
+            sys.quit()
+        if self.dataset == "MNIST":
+            label_batch_size = batch_size // self.num_classes
+            offset = batch_size % self.num_classes
+            labels = np.zeros(len(images_path), self.num_classes) 
+            for idx in range(self.num_classes):
+                labels[label_batch_size*idx: label_batch_size*(idx+1), idx] = 1.0
+        elif self.dataset == "COMIC":
+            labels_list = []
+            for key, embedding in self.label_embeddings:
+                labels_list.append([key, embedding])
+            label_batch_size = batch_size // len(labels_list)
+            offset = batch_size % len(labels_list)
+            labels = np.zeros(len(images_path), self.embedding_dim)
+            for idx, data in enumerate(label_list):
+                labels[label_batch_size*idx: label_batch_size*(idx+1), :] = data[1]
+        elif self.dataset == "WIKIART":
+            labels = None
+
+        return labels, offset
+
+    def interpolation_test(self, labels, batch_size):
+        if not self.with_labels:
+            print_time_info("Error! The engine hasn't initialized with the labels, quit.")
+            sys.quit()
+        if self.dataset == "MNIST":
+            label_1 = label_2 = np.zeros((self.num_classes))
+            label_1[int(labels[0])], label_2[int(labels[1])] = 1, 1
+        elif self.dataset == "COMIC":
+            label_1, label_2 = self.label_embeddings[labels[0]], self.label_embeddings[labels[1]]
+        elif self.dataset == "WIKIART":
+            label_1 = label_2 = None
+        labels = np.zeros((batch_size, len(label_1)))
+        for idx in range(len(label_1)):
+            labels[:, idx] = np.linspace(label_1[idx], label_2[idx], batch_size)
+
+        return labels

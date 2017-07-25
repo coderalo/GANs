@@ -75,11 +75,16 @@ with tf.Session(config=run_config) as sess:
             model.train(FLAGS)
         else:
             model.test()
+            if FLAGS.is_conditional:
+                model.conditional_test()
+                model.interpolation_test()
 
-    elif FLAGS.type == "T2I-GAN":
+    elif FLAGS.type == "DCGAN":
         model = DCGAN(sess, FLAGS, Engine)
         if FLAGS.is_train:
             model.train(FLAGS)
         else:
-            sample_y = np.loadtxt(FLAGS.test_file)
-            model.test(sample_y)
+            model.test()
+            if FLAGS.is_conditional:
+                model.conditional_test()
+                model.interpolation_test()

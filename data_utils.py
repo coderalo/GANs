@@ -69,9 +69,11 @@ def save_images(images, counter, aggregate_size, channels, images_dir, is_train)
         aggregate_path = os.path.join(images_dir, "{:0>5}_all.jpg".format(counter))
     else:
         if counter == 0:
-            aggregate_path = os.path.join(images_dir, "testing_interpolation_all.jpg")
-        else:
+            aggregate_path = os.path.join(images_dir, "testing_all.jpg")
+        elif counter == 1:
             aggregate_path = os.path.join(images_dir, "testing_condition_all.jpg")
+        elif counter == 2:
+            aggregate_path = os.path.join(images_dir, "testing_interpolation_all.jpg")
     merged_image = np.squeeze(merge_image(images, aggregate_size, channels))
     imsave(aggregate_path, merged_image)
 
