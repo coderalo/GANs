@@ -25,11 +25,13 @@ flags.DEFINE_string("y_dim", 10, "Dimension of label [10]")
 ## CONVOLUTIONAL GAN
 flags.DEFINE_integer("fc_dim", 64, "The count of filters of first layer of convolution network [64]")
 flags.DEFINE_integer("fd_dim", 64, "The count of filters of first layer of deconvolution network [64]")
+flags.DEFINE_integer("yl_dim", 128, "Latent dimension for labels [128]")
 ## MLP GAN
 flags.DEFINE_integer("h_dim", 128, "The dimension of hidden MLP layer [128]")
-## TEXT2IMAGE GAN
-flags.DEFINE_integer("w_dim", 4800, "Sent2vec dimension [4800]")
-flags.DEFINE_integer("yl_dim", 128, "Latent dimension for word embeddings [128]")
+## WGAN
+flags.DEFINE_float("clip_value", 0.01, "Gradient clip value [0.01]")
+## IWGAN
+flags.DEFINE_float("grad_scale", 10.0, "The scale of gradient penalty [10.0]")
 # TRAINING SETTINGS
 flags.DEFINE_integer("iterations", 500000, "Number iterations to train [500000]")
 flags.DEFINE_integer("batch_size", 64, "Batch size for training [64]")
@@ -69,7 +71,7 @@ run_config.gpu_options.allow_growth=True
 
 with tf.Session(config=run_config) as sess:
     
-    if FLAGS.type == "GAN":
+    if FLAGS.type in ["GAN", "W-GAN", "IW_GAN", "LS-GAN"]:
         model = GAN(sess, FLAGS, Engine)
         if FLAGS.is_train:
             model.train(FLAGS)
@@ -79,7 +81,7 @@ with tf.Session(config=run_config) as sess:
                 model.conditional_test()
                 model.interpolation_test()
 
-    elif FLAGS.type == "DCGAN":
+    elif FLAGS.type == ["DCGAN", "W-DCGAN", "IW-DCGAN", "LS-DCGAN"]:
         model = DCGAN(sess, FLAGS, Engine)
         if FLAGS.is_train:
             model.train(FLAGS)
@@ -88,3 +90,8 @@ with tf.Session(config=run_config) as sess:
             if FLAGS.is_conditional:
                 model.conditional_test()
                 model.interpolation_test()
+
+    elif FLAGS.type == "CAN":
+        pass
+
+    else: assert False, "ModelTypeError"

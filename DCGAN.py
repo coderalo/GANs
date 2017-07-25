@@ -50,6 +50,11 @@ class DCGAN:
         if self.is_conditional:
             self.y_dim = FLAGS.y_dim
             self.yl_dim = FLAGS.yl_dim
+        self.type = FLAGS.type
+        if self.type == "W-DCGAN":
+            self.clip_value = FLAGS.clip_value
+        elif self.type == "IW-DCGAN":
+            self.grad_scale = FLAGS.grad_scale
 
         self.data_engine = Engine
 
@@ -134,22 +139,65 @@ class DCGAN:
             self.D_real, self.D_real_logits = self.discriminator(self.I, None, reuse=False)
             self.D_fake, self.D_fake_logits = self.discriminator(self.G, None, reuse=True)
         ## summary
-        self.D_real_sum = tf.summary.histogram('D_real', self.D_real)
-        self.D_fake_sum = tf.summary.histogram('D_fake', self.D_fake)
-        if self.is_conditional:
-            self.D_wrong_sum = tf.summary.histogram('D_wrong', self.D_wrong)
-        
-        # loss of model
-        ## discriminator
-        self.D_real_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_real_logits, labels=tf.ones_like(self.D_real)))
-        self.D_fake_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake_logits, labels=tf.zeros_like(self.D_fake)))
-        if self.is_conditional:
-            self.D_wrong_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_wrong_logits, labels=tf.zeros_like(self.D_wrong))) 
-            self.D_loss = self.D_real_loss + self.D_fake_loss + self.D_wrong_loss
+        if self.type == 'GAN':
+            self.D_real_sum = tf.summary.histogram('D_real', self.D_real)
+            self.D_fake_sum = tf.summary.histogram('D_fake', self.D_fake)
+            if self.is_conditional:
+                self.D_wrong_sum = tf.summary.histogram('D_wrong', self.D_wrong) 
         else:
-            self.D_loss = self.D_real_loss + self.D_fake_loss
-        ## generator
-        self.G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake_logits, labels=tf.ones_like(self.D_fake)))
+            self.D_real_sum = tf.summary.histogram('D_real', self.D_real_logits)
+            self.D_fake_sum = tf.summary.histogram('D_fake', self.D_fake_logits)
+            if self.is_conditional:
+                self.D_wrong_sum = tf.summary.histogram('D_wrong', self.D_wrong_logits) 
+        # loss of model
+        if self.type == "DCGAN":
+            self.D_real_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_real_logits, labels=tf.ones_like(self.D_real)))
+            self.D_fake_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake_logits, labels=tf.zeros_like(self.D_fake)))
+            if self.is_conditional:
+                self.D_wrong_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_wrong_logits, labels=tf.zeros_like(self.D_wrong))) 
+                self.D_loss = self.D_real_loss + self.D_fake_loss + self.D_wrong_loss
+            else:
+                self.D_loss = self.D_real_loss + self.D_fake_loss
+            self.G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D_fake_logits, labels=tf.ones_like(self.D_fake)))
+        elif self.type == "W-DCGAN":
+            self.D_real_loss = tf.reduce_mean(self.D_real_logits)
+            self.D_fake_loss = -1 * tf.reduce_mean(self.D_fake_logits)
+            if self.is_conditional:
+                self.D_wrong_loss = -1 * tf.reduce_mean(self.D_wrong_logits)
+                self.D_loss = self.D_real_loss + self.D_fake_loss + self.D_wrong_loss
+            else:
+                self.D_loss = self.D_real_loss + self.D_fake_loss
+            self.G_loss = self.D_fake_loss
+        elif self.type == "IW-DCGAN":
+            self.D_real_loss = tf.reduce_mean(self.D_real_logits)
+            self.D_fake_loss = -1 * tf.reduce_mean(self.D_fake_logits)
+            if self.is_conditional:
+                self.D_wrong_loss = -1 * tf.reduce_mean(self.D_wrong_logits)
+            
+            eps = tf.random_uniform([self.batch_size, 1], minval=0., maxval=1.)
+            inter = eps * self.I + (1. - eps) * self.G
+            if self.is_conditional:
+                grad = tf.gradient(self.discriminator(inter, self.y, reuse=True), inter)[0]
+            else:
+                grad = tf.gradient(self.discriminator(inter, None, reuse=True), inter)[0]
+            grad_norm = tf.sqrt(tf.reduce_sum(tf.square(grad), axis=1))
+            self.grad_penalty = tf.reduce_mean(tf.square(grad_norm - 1.0) * self.grad_scale)
+            
+            if self.is_conditional:
+                self.D_loss = self.D_real_loss + self.D_fake_loss + self.D_wrong_loss + self.grad_penalty
+            else:
+                self.D_loss = self.D_real_loss + self.D_fake_loss + self.grad_penalty
+            self.G_loss = self.D_fake_loss
+        elif self.type == "LS-DCGAN":
+            self.D_real_loss = 0.5 * (tf.reduce_mean(self.D_real_logits - 1) ** 2)
+            self.D_fake_loss = 0.5 * (tf.reduce_mean(self.D_fake_logits) ** 2)
+            if self.is_conditional:
+                self.D_wrong_loss = 0.5 * (tf.reduce_mean(self.D_wrong_logits) ** 2)
+                # TODO: Check if the crop discriminator loss isn't proper
+                self.D_loss = (2./3.) * (self.D_real_loss + self.D_fake_loss + self.D_wrong_loss)
+            else:
+                self.D_loss = self.D_real_loss + self.D_fake_loss
+            self.G_loss = 0.5 * (tf.reduce_mean(self.D_fake_logits - 1) ** 2)
         ## summary
         self.D_real_loss_sum = tf.summary.scalar('D_real_loss', self.D_real_loss)
         self.D_fake_loss_sum = tf.summary.scalar('D_fake_loss', self.D_fake_loss)
@@ -163,6 +211,9 @@ class DCGAN:
         self.d_vars = [var for var in t_vars if 'd_' in var.name]
         self.g_vars = [var for var in t_vars if 'g_' in var.name]
 
+        if self.type == "WGAN":
+            self.D_clips = [var.assign(tf.clip_by_value(var, -self.clip_value, self.clip_value)) for var in self.d_vars]
+        
         self.saver = tf.train.Saver()
 
     def discriminator(self, input_tensor, label_tensor, reuse=False):
@@ -267,20 +318,36 @@ class DCGAN:
 
         for _ in range(self.d_round):
             batch_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-            if self.is_conditional:
-                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
-                        feed_dict={
-                            self.I: batch_I,
-                            self.z: batch_z,
-                            self.y_real: batch_y_real,
-                            self.y_fake: batch_y_fake
-                            })
+            if self.type == "W-DCGAN":
+                if self.is_conditional:
+                    _, summary_str, _ = self.sess.run([self.D_optimizer, self.D_sum, self.D_clips],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.z: batch_z,
+                                self.y_real: batch_y_real,
+                                self.y_fake: batch_y_fake
+                                })
+                else:
+                    _, summary_str, _ = self.sess.run([self.D_optimizer, self.D_sum, self.D_clips],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.z: batch_z
+                                })
             else:
-                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
-                        feed_dict={
-                            self.I: batch_I,
-                            self.z: batch_z
-                            })
+                if self.is_conditional:
+                    _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.z: batch_z,
+                                self.y_real: batch_y_real,
+                                self.y_fake: batch_y_fake
+                                })
+                else:
+                    _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.z: batch_z
+                                })
 
             self.writer.add_summary(summary_str, counter)
 

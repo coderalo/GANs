@@ -45,6 +45,11 @@ class GAN:
             self.test_file = FLAGS.test_file
         self.is_conditional = FLAGS.is_conditional
         if self.is_conditional: self.y_dim = FLAGS.y_dim
+        self.type = FLAGS.type
+        if self.type == "W-GAN":
+            self.clip_value = FLAGS.clip_value
+        elif self.type == "IW-GAN":
+            self.grad_scale = FLAGS.grad_scale
 
         self.data_engine = Engine
 
@@ -112,15 +117,41 @@ class GAN:
             self.D1, self.D1_logits = self.discriminator(self.I, None, reuse=False)
             self.D2, self.D2_logits = self.discriminator(self.G, None, reuse=True)
         ## summary
-        self.D1_sum = tf.summary.histogram('D1', self.D1)
-        self.D2_sum = tf.summary.histogram('D2', self.D2)
+        if self.type == "GAN":
+            self.D1_sum = tf.summary.histogram('D1', self.D1)
+            self.D2_sum = tf.summary.histogram('D2', self.D2)
+        else:
+            self.D1_sum = tf.summary.histogram('D1', self.D1_logits)
+            self.D2_sum = tf.summary.histogram('D2', self.D2_logits)
         # loss of model
-        ## discriminator
-        self.D1_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D1_logits, labels=tf.ones_like(self.D1)))
-        self.D2_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D2_logits, labels=tf.zeros_like(self.D2)))
-        self.D_loss = self.D1_loss + self.D2_loss
-        ## generator
-        self.G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D2_logits, labels=tf.ones_like(self.D2)))
+        if self.type == "GAN":
+            self.D1_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D1_logits, labels=tf.ones_like(self.D1)))
+            self.D2_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D2_logits, labels=tf.zeros_like(self.D2)))
+            self.D_loss = self.D1_loss + self.D2_loss
+            self.G_loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=self.D2_logits, labels=tf.ones_like(self.D2)))
+        elif self.type == "W-GAN":
+            self.D1_loss = tf.reduce_mean(self.D1_logits)
+            self.D2_loss = -1 * tf.reduce_mean(self.D2_logits)
+            self.D_loss = self.D1_loss + self.D2_loss
+            self.G_loss = self.D2_loss
+        elif self.type == "IW-GAN":
+            self.D1_loss = tf.reduce_mean(self.D1_logits)
+            self.D2_loss = -1 * tf.reduce_mean(self.D2_logits)
+            eps = tf.random_uniform([self.batch_size, 1], minval=0., maxval=1.)
+            inter = eps * self.I + (1. - eps) * self.G
+            if self.is_conditional:
+                grad = tf.gradient(self.discriminator(inter, self.y, reuse=True), inter)[0]
+            else:
+                grad = tf.gradient(self.discriminator(inter, None, reuse=True), inter)[0]
+            grad_norm = tf.sqrt(tf.reduce_sum(tf.square(grad), axis=1))
+            self.grad_penalty = tf.reduce_mean(tf.square(grad_norm - 1.0) * self.grad_scale)
+            self.D_loss = self.D1_loss + self.D2_loss + self.grad_penalty
+            self.G_loss = self.D2_loss
+        elif self.type == "LS-GAN":
+            self.D1_loss = 0.5 * (tf.reduce_mean(self.D1_logits - 1) ** 2)
+            self.D2_loss = 0.5 * (tf.reduce_mean(self.D2_logits) ** 2)
+            self.D_loss = self.D1_loss + self.D2_loss
+            self.G_loss = 0.5 * (tf.reduce_mean(self.D2_logits - 1) ** 2)
         ## summary
         self.D1_loss_sum = tf.summary.scalar('D1_loss', self.D1_loss)
         self.D2_loss_sum = tf.summary.scalar('D2_loss', self.D2_loss)
@@ -131,6 +162,9 @@ class GAN:
 
         self.d_vars = [var for var in t_vars if 'd_' in var.name]
         self.g_vars = [var for var in t_vars if 'g_' in var.name]
+
+        if self.type == "W-GAN":
+            self.D_clips = [var.assign(tf.clip_by_value(var, -self.clip_value, self.clip_value)) for var in self.d_vars]
 
         self.saver = tf.train.Saver()
 
@@ -182,19 +216,34 @@ class GAN:
 
         for _ in range(self.d_round): 
             batch_z = np.random.uniform(-1, 1, size=(self.batch_size, self.z_dim))
-            if self.is_conditional:
-                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
-                        feed_dict={
-                            self.I: batch_I,
-                            self.y: batch_y,
-                            self.z: batch_z
-                            })
+            if self.type == "W-GAN":
+                if self.is_conditional:
+                    _, summary_str, _ = self.sess.run([self.D_optimizer, self.D_sum, self.D_clips],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.y: batch_y,
+                                self.z: batch_z
+                                })
+                else:
+                    _, summary_str, _ = self.sess.run([self.D_optimizer, self.D_sum, self.D_clips],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.z: batch_z
+                                })
             else:
-                _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
-                        feed_dict={
-                            self.I: batch_I,
-                            self.z: batch_z
-                            })
+                if self.is_conditional:
+                    _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.y: batch_y,
+                                self.z: batch_z
+                                })
+                else:
+                    _, summary_str = self.sess.run([self.D_optimizer, self.D_sum],
+                            feed_dict={
+                                self.I: batch_I,
+                                self.z: batch_z
+                                })
 
             self.writer.add_summary(summary_str, counter)
 
