@@ -49,12 +49,24 @@ class batch_norm(object):
                 scope=self.name
                 )
 
+def instance_norm(input_tensor, name="instance_norm"):
+    with tf.variable_scope(name):
+        depth = input_tensor.get_shape()[3]
+        scale = tf.get_variable("scale", [depth], initializer=tf.random_normal_initializer(1.0, 0.02, dtype=tf.float32))
+        offset = tf.get_variable("offset", [depth], initializer=tf.constant_initializer(0.0))
+        mean, variance = tf.nn.moments(input_tensor, axes=[1,2], keep_dims=True)
+        epsilon = 1e-5
+        inv = tf.rsqrt(variance + epsilon)
+        normalized = (input_tensor - mean) * inv
+        return scale * normalized + offset
+
 def conv2d(
         input_tensor, output_dim,
         kernel_size=(5, 5),
         strides=(2, 2),
         stddev=0.02,
         name="conv2d",
+        padding="SAME",
         return_weight=False
         ):
     with tf.variable_scope(name):
@@ -65,7 +77,7 @@ def conv2d(
                 initializer=tf.random_normal_initializer(stddev=stddev))
         b = tf.get_variable('b', [output_dim], initializer=tf.constant_initializer(0.0))
         
-        conv = tf.nn.conv2d(input_tensor, W, strides=_strides, padding='SAME')
+        conv = tf.nn.conv2d(input_tensor, W, strides=_strides, padding=padding)
         conv = tf.reshape(tf.nn.bias_add(conv, b), conv.get_shape()) 
 
         if return_weight: return conv, [W, b]
@@ -93,6 +105,14 @@ def deconv2d(
 
         if return_weight: return deconv, [W, b]
         else: return deconv
+
+def residule_block(input_tensor, dim, kernel_size=(3, 3), strides=(1, 1), name="residule_block"):
+    padding = [int((kernel_size[0] - 1) / 2), int((kernel_size[1] - 1) / 2)]
+    y = tf.pad(input_tensor, [[0, 0], padding, padding, [0, 0]], "REFLECT")
+    y = instance_norm(conv2d(y, dim, kernel_size, strides, padding='VALID', name=name+'_conv1'), name+"_in1")
+    y = tf.pad(tf.nn.relu(y), [[0, 0], padding, padding, [0, 0]], "REFLECT")
+    y = instance_norm(conv2d(y, dim, kernel_size, strides, padding='VALID', name=name+'_conv2'), name+"_in2")
+    return y + input_tensor
 
 def linear(
         input_tensor, output_dim,
